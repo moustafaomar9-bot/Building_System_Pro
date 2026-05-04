@@ -112,7 +112,7 @@ if revenue.empty and expenses.empty:
         
         1. افتح رابط الجوجل شيت
         2. اضغط على زر مشاركة (Share) في أعلى اليمين
-        3. أضف هذا البريد الإلكتروني: phone-952@phoneproject.iam.gserviceaccount.com
+        3. أضف هذا البريد الإلكتروني: phone-952@phoneproproject.iam.gserviceaccount.com
         4. اختر صلاحية محرر (Editor)
         5. اضغط على إرسال (Send)
         6. انتظر 2-3 دقائق ثم حدث الصفحة
