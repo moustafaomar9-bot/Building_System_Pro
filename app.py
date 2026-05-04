@@ -7,14 +7,14 @@ from bidi.algorithm import get_display
 from streamlit_gsheets import GSheetsConnection
 
 # 1. إعداد الصفحة
-st.set_page_config(page_title="نظام إدارة العمارة - النسخة الفاخرة", layout="wide")
+st.set_page_config(page_title="نظام إدارة العمارة - النسخة الفاخرة المحدثة", layout="wide")
 
-# 2. معالجة المفتاح السري لحل مشكلة PEM (ضروري لـ Streamlit Cloud)
+# 2. معالجة المفتاح السري لـ Google Sheets (لحل مشكلة الرموز في السيرفر)
 if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
     raw_key = st.secrets["connections"]["gsheets"]["private_key"]
     st.secrets["connections"]["gsheets"]["private_key"] = raw_key.replace("\\n", "\n")
 
-# 3. رابط جوجل شيت الخاص بك
+# 3. رابط جوجل شيت الخاص بك (تأكد من مطابقة أسماء الصفحات: revenue و expenses)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1_X5q3PkdJHbgiLCqZICsFEQdSVzAsDwjC2gN5mHYuuw/edit?usp=sharing"
 
 # =====================================================
@@ -32,77 +32,83 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     try:
-        # قراءة البيانات مباشرة من الشيت (تعطيل الكاش ttl=0 لضمان التحديث اللحظي)
+        # قراءة البيانات مع تعطيل الكاش لضمان الدقة اللحظية
         rev = conn.read(spreadsheet=SHEET_URL, worksheet="revenue", ttl=0)
         exp = conn.read(spreadsheet=SHEET_URL, worksheet="expenses", ttl=0)
-    except:
+    except Exception as e:
+        st.error(f"خطأ في الاتصال: تأكد من تسمية الصفحات بـ revenue و expenses")
         rev = pd.DataFrame(columns=["الدور", "الوحدة", "المالك", "شهر الاستحقاق", "الاشتراك", "المدفوع", "ملاحظات"])
-        exp = pd.DataFrame(columns=["التاريخ", "النوع", "التفاصيل", "المبلغ"])
+        exp = pd.DataFrame(columns=["التاريخ", "الشهر", "النوع", "التفاصيل", "المبلغ"])
     
+    # تنظيف البيانات
+    rev["شهر الاستحقاق"] = rev["شهر الاستحقاق"].astype(str).replace(['nan', 'None', '<NA>'], '')
     rev["الاشتراك"] = pd.to_numeric(rev["الاشتراك"], errors="coerce").fillna(0)
     rev["المدفوع"] = pd.to_numeric(rev["المدفوع"], errors="coerce").fillna(0)
+    
+    if "الشهر" not in exp.columns: exp["الشهر"] = ""
+    exp["الشهر"] = exp["الشهر"].astype(str).replace(['nan', 'None', '<NA>'], '')
     exp["المبلغ"] = pd.to_numeric(exp["المبلغ"], errors="coerce").fillna(0)
+    
     return rev, exp
 
 def save_all(rev_df, exp_df):
     try:
         conn.update(spreadsheet=SHEET_URL, worksheet="revenue", data=rev_df)
         conn.update(spreadsheet=SHEET_URL, worksheet="expenses", data=exp_df)
-        st.success("✅ تم تحديث البيانات في جوجل شيت!")
+        st.success("✅ تم تحديث البيانات سحابياً بنجاح!")
     except Exception as e:
-        st.error(f"فشل الحفظ: {e}")
+        st.error(f"فشل الحفظ السحابي: {e}")
 
 revenue, expenses = load_data()
+
+# وظيفة الترتيب الآمن للشهور
+def get_sorted_months(df, col):
+    m_list = [str(m) for m in df[col].unique() if str(m).strip() != "" and str(m).lower() != 'nan']
+    return sorted(m_list, reverse=True)
 
 # =====================================================
 # القائمة الجانبية
 # =====================================================
-menu = st.sidebar.radio("القائمة الرئيسية", ["لوحة التحكم", "الإيرادات", "المصاريف", "المتأخرات", "التقارير الاحترافية"])
+menu = st.sidebar.radio("القائمة الرئيسية", ["لوحة التحكم", "الإيرادات", "المصاريف", "بدء شهر جديد", "المتأخرات", "التقارير الاحترافية"])
 
 # =====================================================
 # 1. لوحة التحكم
 # =====================================================
 if menu == "لوحة التحكم":
     st.title("📊 ملخص المركز المالي")
-    t_sub, t_paid, t_exp = revenue["الاشتراك"].sum(), revenue["المدفوع"].sum(), expenses["المبلغ"].sum()
-    c1, c2, c3 = st.columns(3)
-    c1.metric("إجمالي المطلوبات", f"{int(t_sub):,}")
-    c2.metric("إجمالي المحصل", f"{int(t_paid):,}")
-    c3.metric("صافي الخزينة الفعلي", f"{int(t_paid - t_exp):,}")
+    all_m = get_sorted_months(revenue, "شهر الاستحقاق")
+    if all_m:
+        sel_m = st.selectbox("عرض إحصائيات شهر:", all_m)
+        df_r = revenue[revenue["شهر الاستحقاق"] == sel_m]
+        df_e = expenses[expenses["الشهر"] == sel_m]
+        
+        t_sub, t_paid = df_r["الاشتراك"].sum(), df_r["المدفوع"].sum()
+        t_exp = df_e["المبلغ"].sum()
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric(f"مطلوب {sel_m}", f"{int(t_sub):,}")
+        c2.metric(f"محصل {sel_m}", f"{int(t_paid):,}")
+        c3.metric(f"صافي الشهر", f"{int(t_paid - t_exp):,}")
 
-    fig, ax = plt.subplots(figsize=(6, 2.5))
-    labels = [ar("المطلوب"), ar("المحصل"), ar("المصاريف")]
-    values = [t_sub, t_paid, t_exp]
-    bars = ax.bar(labels, values, color=['#3498db', '#2ecc71', '#e74c3c'], width=0.5)
-    for bar in bars:
-        yval = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2, yval, f'{int(yval):,}', ha='center', va='bottom', fontweight='bold', fontsize=8)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    st.pyplot(fig)
+        fig, ax = plt.subplots(figsize=(6, 2.5))
+        ax.bar([ar("المطلوب"), ar("المحصل"), ar("المصاريف")], [t_sub, t_paid, t_exp], color=['#3498db', '#2ecc71', '#e74c3c'], width=0.5)
+        st.pyplot(fig)
+    else:
+        st.info("لا توجد بيانات حالياً.")
 
 # =====================================================
 # 2. الإيرادات
 # =====================================================
 elif menu == "الإيرادات":
     st.subheader("📥 إدارة الإيرادات")
-    t1, t2 = st.tabs(["➕ إضافة جديد", "📝 تعديل"])
-    with t1:
-        with st.form("add_rev"):
-            col1, col2, col3 = st.columns(3)
-            d1, d2, d3 = col1.text_input("الدور"), col2.text_input("الوحدة"), col3.text_input("المالك")
-            c4, c5, c6 = st.columns(3)
-            d4 = c4.text_input("الشهر المستحق", value=datetime.now().strftime("%m/%Y"))
-            d5, d6 = c5.number_input("الاشتراك", 0), c6.number_input("المدفوع", 0)
-            if st.form_submit_button("حفظ"):
-                new_row = pd.DataFrame([[d1, d2, d3, d4, d5, d6, ""]], columns=revenue.columns)
-                revenue = pd.concat([revenue, new_row], ignore_index=True)
-                save_all(revenue, expenses)
-                st.rerun()
-    with t2:
-        edited_rev = st.data_editor(revenue, num_rows="dynamic", key="rev_ed")
+    all_m = get_sorted_months(revenue, "شهر الاستحقاق")
+    if all_m:
+        sel_m = st.selectbox("اختر الشهر للتعديل:", all_m)
+        month_data = revenue[revenue["شهر الاستحقاق"] == sel_m].copy()
+        edited_rev = st.data_editor(month_data, num_rows="dynamic", key="rev_ed")
         if st.button("حفظ التعديلات"):
-            save_all(edited_rev, expenses)
+            others = revenue[revenue["شهر الاستحقاق"] != sel_m]
+            save_all(pd.concat([others, edited_rev], ignore_index=True), expenses)
             st.rerun()
 
 # =====================================================
@@ -110,121 +116,125 @@ elif menu == "الإيرادات":
 # =====================================================
 elif menu == "المصاريف":
     st.subheader("📤 إدارة المصروفات")
+    all_m = get_sorted_months(revenue, "شهر الاستحقاق")
     te1, te2 = st.tabs(["💸 تسجيل مصروف", "📝 تعديل"])
     with te1:
         with st.form("exp_add"):
-            e_date = st.date_input("التاريخ", datetime.now())
+            col1, col2 = st.columns(2)
+            e_date = col1.date_input("التاريخ", datetime.now())
+            e_month = col2.selectbox("يسجل على شهر:", all_m if all_m else [datetime.now().strftime("%m/%Y")])
             e_type = st.selectbox("النوع", ["نظافة", "كهرباء", "مياه", "صيانة", "أخرى"])
             e_amt = st.number_input("المبلغ", 0)
             e_det = st.text_area("التفاصيل")
             if st.form_submit_button("حفظ"):
-                new_exp = pd.DataFrame([[e_date.strftime("%Y-%m-%d"), e_type, e_det, e_amt]], columns=expenses.columns)
-                expenses = pd.concat([expenses, new_exp], ignore_index=True)
-                save_all(revenue, expenses)
+                new_exp = pd.DataFrame([[e_date.strftime("%Y-%m-%d"), e_month, e_type, e_det, e_amt]], columns=expenses.columns)
+                save_all(revenue, pd.concat([expenses, new_exp], ignore_index=True))
                 st.rerun()
     with te2:
-        edited_exp = st.data_editor(expenses, num_rows="dynamic", key="exp_ed")
-        if st.button("حفظ التعديلات"):
-            save_all(revenue, edited_exp)
-            st.rerun()
+        if all_m:
+            sel_m_view = st.selectbox("عرض مصروفات شهر:", all_m)
+            m_exp = expenses[expenses["الشهر"] == sel_m_view].copy()
+            ed_exp = st.data_editor(m_exp, num_rows="dynamic")
+            if st.button("حفظ التعديلات"):
+                other_exp = expenses[expenses["الشهر"] != sel_m_view]
+                save_all(revenue, pd.concat([other_exp, ed_exp], ignore_index=True))
+                st.rerun()
 
 # =====================================================
-# 4. المتأخرات (تنسيق HTML الفاخر)
+# 4. بدء شهر جديد
+# =====================================================
+elif menu == "بدء شهر جديد":
+    st.title("🆕 ترحيل البيانات لشهر جديد")
+    all_m = get_sorted_months(revenue, "شهر الاستحقاق")
+    if all_m:
+        last_m = st.selectbox("نسخ البيانات من شهر:", all_m)
+        new_m = st.text_input("الشهر الجديد (مثلاً 03/2026):")
+        if st.button("تنفيذ الترحيل الآن"):
+            if new_m in all_m: st.error("الشهر موجود بالفعل!")
+            elif new_m == "": st.warning("برجاء كتابة اسم الشهر الجديد")
+            else:
+                last_data = revenue[revenue["شهر الاستحقاق"] == last_m].copy()
+                new_rows = []
+                for _, r in last_data.iterrows():
+                    debt = r["الاشتراك"] - r["المدفوع"]
+                    note = f"متأخرات: {int(debt)}" if debt > 0 else "خالص"
+                    new_rows.append([r["الدور"], r["الوحدة"], r["المالك"], new_m, r["الاشتراك"], 0, note])
+                save_all(pd.concat([revenue, pd.DataFrame(new_rows, columns=revenue.columns)], ignore_index=True), expenses)
+                st.balloons()
+                st.rerun()
+
+# =====================================================
+# 5. المتأخرات
 # =====================================================
 elif menu == "المتأخرات":
     st.subheader("⚠️ كشف المتأخرات")
     revenue["المتبقي"] = revenue["الاشتراك"] - revenue["المدفوع"]
     late = revenue[revenue["المتبقي"] > 0].copy()
-    
     if not late.empty:
-        late_html = f"""
-        <!DOCTYPE html>
-        <html lang="ar">
-        <head>
-            <meta charset="UTF-8">
-            <style>
-                body {{ direction: rtl; font-family: 'Segoe UI', sans-serif; padding: 20px; }}
-                .container {{ padding: 25px; border: 3px solid #e74c3c; border-radius: 15px; background: white; }}
-                .msg {{ text-align: center; color: #2c3e50; font-size: 17px; font-weight: bold; background: #fdf2f2; padding: 15px; border-radius: 10px; margin-bottom: 20px; }}
-                table {{ width: 100%; border-collapse: collapse; }}
-                th {{ background: #c0392b; color: white; padding: 12px; border: 1px solid #ddd; }}
-                td {{ padding: 10px; border: 1px solid #ddd; text-align: center; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h2 style="color: #c0392b; text-align: center;">⚠️ تنبيه هام: كشف مديونيات السكان</h2>
-                <p class="msg">يرجى التكرم من السادة الملاك المذكور أسماؤهم أدناه سرعة سداد المتأخرات لضمان استمرار كافة خدمات العمارة دون انقطاع.</p>
-                <table>
-                    <tr><th>المالك</th><th>الوحدة</th><th>الشهر</th><th>المبلغ المطلوب</th></tr>
-                    {" ".join([f"<tr><td>{r['المالك']}</td><td>{r['الوحدة']}</td><td>{r['شهر الاستحقاق']}</td><td style='color:red; font-weight:bold;'>{int(r['المتبقي']):,}</td></tr>" for _, r in late.iterrows()])}
-                </table>
-            </div>
-        </body>
-        </html>
-        """
-        st.components.v1.html(late_html, height=500, scrolling=True)
-        st.download_button("📥 تحميل كشف المتأخرات", late_html, "Late_Report.html", "text/html")
-    else:
-        st.success("🎉 لا توجد متأخرات!")
+        st.dataframe(late[["المالك", "الوحدة", "شهر الاستحقاق", "المتبقي", "ملاحظات"]])
+    else: st.success("لا توجد متأخرات!")
 
 # =====================================================
-# 5. التقارير الاحترافية (التنسيق الرسمي الكامل)
+# 6. التقارير الاحترافية
 # =====================================================
 elif menu == "التقارير الاحترافية":
     st.title("📑 التقارير المالية الاحترافية")
-    rep_mode = st.selectbox("نوع التقرير", ["تقرير مجمع شامل", "تقرير شهري تفصيلي"])
-    sel_m = st.selectbox("اختر الشهر", revenue["شهر الاستحقاق"].unique()) if rep_mode == "تقرير شهري تفصيلي" else ""
+    all_m = get_sorted_months(revenue, "شهر الاستحقاق")
+    if all_m:
+        sel_m = st.selectbox("اختر الشهر للتقرير", all_m)
 
-    if st.button("توليد التقرير الفاخر"):
-        df_r = revenue[revenue["شهر الاستحقاق"] == sel_m].copy() if sel_m else revenue.copy()
-        table_title = f"📋 كشف اشتراكات الوحدات لشهر {sel_m}" if sel_m else "📋 كشف اشتراكات الوحدات (شامل)"
+        if st.button("توليد التقرير الفاخر"):
+            df_r = revenue[revenue["شهر الاستحقاق"] == sel_m].copy()
+            df_e = expenses[expenses["الشهر"] == sel_m].copy()
+            
+            def get_h(row):
+                d = row['الاشتراك'] - row['المدفوع']
+                if d > 0: return f'<span style="color:red; font-weight:bold;">مطلوب: {int(d):,}</span>'
+                elif d < 0: return f'<span style="color:green; font-weight:bold;">له: {int(abs(d)):,}</span>'
+                return '<span style="color:gray;">مسدد</span>'
+            
+            df_r["حالة الحساب"] = df_r.apply(get_h, axis=1)
+            s_t, p_t = df_r["الاشتراك"].sum(), df_r["المدفوع"].sum()
+            e_t = df_e["المبلغ"].sum()
 
-        def get_h(row):
-            d = row['الاشتراك'] - row['المدفوع']
-            if d > 0: return f'<span style="color:red; font-weight:bold;">مطلوب: {int(d):,}</span>'
-            elif d < 0: return f'<span style="color:green; font-weight:bold;">له: {int(abs(d)):,}</span>'
-            return '<span style="color:gray;">مسدد</span>'
-        
-        df_r["حالة الحساب"] = df_r.apply(get_h, axis=1)
-        s_t, p_t, e_t = df_r["الاشتراك"].sum(), df_r["المدفوع"].sum(), expenses["المبلغ"].sum()
-
-        full_html = f"""
-        <!DOCTYPE html>
-        <html lang="ar">
-        <head>
-            <meta charset="UTF-8">
-            <style>
-                body {{ direction: rtl; font-family: 'Segoe UI', Tahoma, sans-serif; padding: 20px; background-color: #f0f2f5; }}
-                .report-card {{ background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); max-width: 1000px; margin: auto; }}
-                .header-title {{ color: #1a2a6c; text-align: center; font-size: 32px; font-weight: bold; margin-bottom: 10px; border-bottom: 5px solid #3498db; padding-bottom: 15px; }}
-                .stat-box {{ display: flex; gap: 15px; margin: 30px 0; }}
-                .card {{ flex: 1; padding: 20px; border-radius: 15px; text-align: center; color: white; }}
-                .blue {{ background: linear-gradient(135deg, #1e3c72, #2a5298); }}
-                .green {{ background: linear-gradient(135deg, #11998e, #38ef7d); }}
-                .red {{ background: linear-gradient(135deg, #cb2d3e, #ef473a); }}
-                .dark {{ background: linear-gradient(135deg, #232526, #414345); }}
-                table {{ width: 100%; border-collapse: collapse; margin-top: 25px; }}
-                th {{ background-color: #1a2a6c; color: white; padding: 15px; }}
-                td {{ padding: 12px; border: 1px solid #eee; text-align: center; }}
-            </style>
-        </head>
-        <body>
-            <div class="report-card">
-                <div class="header-title">التقرير المالي الرسمي</div>
-                <div class="stat-box">
-                    <div class="card blue"><h3>المطلوب</h3><p>{int(s_t):,}</p></div>
-                    <div class="card green"><h3>المحصل</h3><p>{int(p_t):,}</p></div>
-                    <div class="card red"><h3>المصروفات</h3><p>{int(e_t):,}</p></div>
-                    <div class="card dark"><h3>الصافي</h3><p>{int(p_t - e_t):,}</p></div>
+            full_html = f"""
+            <!DOCTYPE html>
+            <html lang="ar">
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body {{ direction: rtl; font-family: 'Segoe UI', Tahoma, sans-serif; padding: 20px; background-color: #f0f2f5; }}
+                    .report-card {{ background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); max-width: 1000px; margin: auto; }}
+                    .header-title {{ color: #1a2a6c; text-align: center; font-size: 32px; font-weight: bold; margin-bottom: 10px; border-bottom: 5px solid #3498db; padding-bottom: 15px; }}
+                    .stat-box {{ display: flex; gap: 15px; margin: 30px 0; }}
+                    .card {{ flex: 1; padding: 20px; border-radius: 15px; text-align: center; color: white; box-shadow: 0 5px 15px rgba(0,0,0,0.1); }}
+                    .blue {{ background: linear-gradient(135deg, #1e3c72, #2a5298); }}
+                    .green {{ background: linear-gradient(135deg, #11998e, #38ef7d); }}
+                    .red {{ background: linear-gradient(135deg, #cb2d3e, #ef473a); }}
+                    .dark {{ background: linear-gradient(135deg, #232526, #414345); }}
+                    table {{ width: 100%; border-collapse: collapse; margin-top: 25px; background: white; border-radius: 10px; overflow: hidden; }}
+                    th {{ background-color: #1a2a6c; color: white; padding: 15px; text-align: center; }}
+                    td {{ padding: 12px; border: 1px solid #eee; text-align: center; font-size: 14px; }}
+                    tr:nth-child(even) {{ background-color: #f9f9f9; }}
+                </style>
+            </head>
+            <body>
+                <div class="report-card">
+                    <div class="header-title">التقرير المالي لشهر {sel_m}</div>
+                    <div class="stat-box">
+                        <div class="card blue"><h3>المطلوب</h3><p>{int(s_t):,}</p></div>
+                        <div class="card green"><h3>المحصل</h3><p>{int(p_t):,}</p></div>
+                        <div class="card red"><h3>المصاريف</h3><p>{int(e_t):,}</p></div>
+                        <div class="card dark"><h3>صافي الرصيد</h3><p>{int(p_t - e_t):,}</p></div>
+                    </div>
+                    <h3 style="color: #1a2a6c; border-right: 5px solid #3498db; padding-right: 10px;">📋 كشف اشتراكات الوحدات</h3>
+                    {df_r[["الدور", "الوحدة", "المالك", "الاشتراك", "المدفوع", "حالة الحساب"]].to_html(index=False, escape=False)}
+                    <h3 style="margin-top:40px; color: #1a2a6c; border-right: 5px solid #e74c3c; padding-right: 10px;">💸 كشف المصروفات التفصيلي</h3>
+                    {df_e[["التاريخ", "النوع", "التفاصيل", "المبلغ"]].to_html(index=False)}
                 </div>
-                <h3>{table_title}</h3>
-                {df_r.to_html(index=False, escape=False)}
-                <h3 style="margin-top:40px;">💸 كشف المصروفات</h3>
-                {expenses.to_html(index=False)}
-            </div>
-        </body>
-        </html>
-        """
-        st.components.v1.html(full_html, height=700, scrolling=True)
-        st.download_button("💾 تحميل التقرير للطباعة", full_html, "Report.html", "text/html")
+            </body>
+            </html>
+            """
+            st.components.v1.html(full_html, height=700, scrolling=True)
+            st.download_button(f"💾 تحميل تقرير شهر {sel_m}", full_html, f"Report_{sel_m}.html", "text/html")
+    else: st.info("لا توجد شهور مسجلة.")
