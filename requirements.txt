@@ -1,7 +1,8 @@
-pandas
 streamlit
-gspread
-gspread-dataframe
-openpyxl
-xlsxwriter
+pandas
 matplotlib
+arabic-reshaper
+python-bidi
+openpyxl
+gspread
+google-auth
