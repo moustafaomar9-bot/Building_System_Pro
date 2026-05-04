@@ -16,7 +16,7 @@ if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
     st.secrets["connections"]["gsheets"]["private_key"] = raw_key.replace("\\n", "\n")
 
 # 3. رابط جوجل شيت الخاص بك (تأكد من مطابقة أسماء الصفحات: revenue و expenses)
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1_X5q3PkdJHbgiLCqZICsFEQdSVzAsDwjC2gN5mHYuuw/edit?usp=sharing"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1_X5q3PkdJHbgiLCqZICsFEQdSVzAsDwjC2gN5mHYuuw"
 
 # =====================================================
 # دالة معالجة العربي للرسوم البيانية
