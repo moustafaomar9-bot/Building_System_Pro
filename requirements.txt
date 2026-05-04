@@ -6,3 +6,4 @@ python-bidi
 openpyxl
 gspread
 google-auth
+st-gsheets-connection
