@@ -12,6 +12,7 @@ st.set_page_config(page_title="نظام إدارة العمارة - النسخة
 # 2. معالجة المفتاح السري لـ Google Sheets (لحل مشكلة الرموز في السيرفر)
 if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
     raw_key = st.secrets["connections"]["gsheets"]["private_key"]
+    # هذا السطر ضروري جداً لتحويل النص إلى تنسيق PEM صحيح
     st.secrets["connections"]["gsheets"]["private_key"] = raw_key.replace("\\n", "\n")
 
 # 3. رابط جوجل شيت الخاص بك (تأكد من مطابقة أسماء الصفحات: revenue و expenses)
