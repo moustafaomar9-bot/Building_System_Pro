@@ -33,24 +33,18 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     try:
-        # محاولة القراءة مع تعطيل الكاش نهائياً
+        # تجربة قراءة الشيت بالكامل دون تحديد أسماء صفحات في البداية
+        df = conn.read(spreadsheet=SHEET_URL, ttl=0)
+        st.success("✅ نجح الاتصال الأساسي!")
+        
+        # محاولة الوصول للصفحات المحددة
         rev = conn.read(spreadsheet=SHEET_URL, worksheet="revenue", ttl=0)
         exp = conn.read(spreadsheet=SHEET_URL, worksheet="expenses", ttl=0)
-        
-        # إذا نجحت القراءة ولكن الجداول فارغة، فقد تكون المشكلة في أسماء الأعمدة
-        if rev.empty:
-            st.warning("⚠️ تم الاتصال بصفحة revenue ولكنها لا تحتوي على بيانات أو الأعمدة غير صحيحة.")
-            
         return rev, exp
     except Exception as e:
-        # عرض الخطأ التقني الصريح لك
-        st.error(f"❌ خطأ تقني في الاتصال بـ Google Sheets:")
-        st.info(f"وصف الخطأ: {e}")
-        
-        # إنشاء جداول فارغة للسماح للتطبيق بالتحميل
-        rev = pd.DataFrame(columns=["الدور", "الوحدة", "المالك", "شهر الاستحقاق", "الاشتراك", "المدفوع", "ملاحظات"])
-        exp = pd.DataFrame(columns=["التاريخ", "الشهر", "النوع", "التفاصيل", "المبلغ"])
-        return rev, exp
+        st.error(f"❌ الخطأ لا يزال قائماً: {e}")
+        # إذا استمر الخطأ 400 هنا، فالمشكلة بنسبة 100% في الـ Secrets (المفتاح الخاص)
+        return pd.DataFrame(), pd.DataFrame()
 
 def save_all(rev_df, exp_df):
     try:
