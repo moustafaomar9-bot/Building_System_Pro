@@ -9,55 +9,57 @@ from streamlit_gsheets import GSheetsConnection
 # 1. إعداد الصفحة
 st.set_page_config(page_title="نظام إدارة العمارة - النسخة الفاخرة المحدثة", layout="wide")
 
-# 2. معالجة المفتاح السري لـ Google Sheets (لحل مشكلة الرموز في السيرفر)
+# 2. معالجة المفتاح السري
 if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
     raw_key = st.secrets["connections"]["gsheets"]["private_key"]
-    # هذا السطر ضروري جداً لتحويل النص إلى تنسيق PEM صحيح
     st.secrets["connections"]["gsheets"]["private_key"] = raw_key.replace("\\n", "\n")
 
-# 3. رابط جوجل شيت الخاص بك (تأكد من مطابقة أسماء الصفحات: revenue و expenses)
+# 3. الرابط المختصر (تأكد أنه نفس الرابط الذي أعطيت فيه الصلاحية للإيميل)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1_X5q3PkdJHbgiLCqZICsFEQdSVzAsDwjC2gN5mHYuuw"
 
-# =====================================================
-# دالة معالجة العربي للرسوم البيانية
-# =====================================================
+# دالة معالجة العربي
 def ar(text):
     if pd.isna(text) or text == "": return ""
     reshaped = arabic_reshaper.reshape(str(text))
     return get_display(reshaped)
 
-# =====================================================
-# تحميل وحفظ البيانات عبر Google Sheets
-# =====================================================
+# الاتصال وتحميل البيانات
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
+    # إنشاء هيكل بيانات احتياطي في حال الفشل
+    empty_rev = pd.DataFrame(columns=["الدور", "الوحدة", "المالك", "شهر الاستحقاق", "الاشتراك", "المدفوع", "ملاحظات"])
+    empty_exp = pd.DataFrame(columns=["التاريخ", "الشهر", "النوع", "التفاصيل", "المبلغ"])
+    
     try:
-        # تجربة قراءة الشيت بالكامل دون تحديد أسماء صفحات في البداية
-        df = conn.read(spreadsheet=SHEET_URL, ttl=0)
-        st.success("✅ نجح الاتصال الأساسي!")
-        
-        # محاولة الوصول للصفحات المحددة
         rev = conn.read(spreadsheet=SHEET_URL, worksheet="revenue", ttl=0)
         exp = conn.read(spreadsheet=SHEET_URL, worksheet="expenses", ttl=0)
+        
+        # التأكد من وجود الأعمدة المطلوبة حتى لا ينهار البرنامج (KeyError)
+        if "شهر الاستحقاق" not in rev.columns:
+            rev = empty_rev
+        if "الشهر" not in exp.columns:
+            exp = empty_exp
+            
         return rev, exp
     except Exception as e:
-        st.error(f"❌ الخطأ لا يزال قائماً: {e}")
-        # إذا استمر الخطأ 400 هنا، فالمشكلة بنسبة 100% في الـ Secrets (المفتاح الخاص)
-        return pd.DataFrame(), pd.DataFrame()
-
-def save_all(rev_df, exp_df):
-    try:
-        conn.update(spreadsheet=SHEET_URL, worksheet="revenue", data=rev_df)
-        conn.update(spreadsheet=SHEET_URL, worksheet="expenses", data=exp_df)
-        st.success("✅ تم تحديث البيانات سحابياً بنجاح!")
-    except Exception as e:
-        st.error(f"فشل الحفظ السحابي: {e}")
+        st.error(f"⚠️ فشل في جلب البيانات من جوجل شيت (خطأ: {e})")
+        return empty_rev, empty_exp
 
 revenue, expenses = load_data()
 
+# تنظيف البيانات بعد التحميل
+revenue["شهر الاستحقاق"] = revenue["شهر الاستحقاق"].astype(str).replace(['nan', 'None', '<NA>'], '')
+revenue["الاشتراك"] = pd.to_numeric(revenue["الاشتراك"], errors="coerce").fillna(0)
+revenue["المدفوع"] = pd.to_numeric(revenue["المدفوع"], errors="coerce").fillna(0)
+if "الشهر" not in expenses.columns: expenses["الشهر"] = ""
+expenses["الشهر"] = expenses["الشهر"].astype(str).replace(['nan', 'None', '<NA>'], '')
+expenses["المبلغ"] = pd.to_numeric(expenses["المبلغ"], errors="coerce").fillna(0)
+
 # وظيفة الترتيب الآمن للشهور
 def get_sorted_months(df, col):
+    if df.empty or col not in df.columns:
+        return []
     m_list = [str(m) for m in df[col].unique() if str(m).strip() != "" and str(m).lower() != 'nan']
     return sorted(m_list, reverse=True)
 
