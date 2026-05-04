@@ -6,10 +6,15 @@ import arabic_reshaper
 from bidi.algorithm import get_display
 from streamlit_gsheets import GSheetsConnection
 
-# إعداد الصفحة
-st.set_page_config(page_title="نظام إدارة العمارة - النسخة السحابية", layout="wide")
+# 1. إعداد الصفحة
+st.set_page_config(page_title="نظام إدارة العمارة - النسخة الفاخرة", layout="wide")
 
-# رابط الشيت الخاص بك
+# 2. معالجة المفتاح السري لحل مشكلة PEM (ضروري لـ Streamlit Cloud)
+if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+    raw_key = st.secrets["connections"]["gsheets"]["private_key"]
+    st.secrets["connections"]["gsheets"]["private_key"] = raw_key.replace("\\n", "\n")
+
+# 3. رابط جوجل شيت الخاص بك
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1_X5q3PkdJHbgiLCqZICsFEQdSVzAsDwjC2gN5mHYuuw/edit?usp=sharing"
 
 # =====================================================
@@ -21,21 +26,19 @@ def ar(text):
     return get_display(reshaped)
 
 # =====================================================
-# الاتصال بجوجل شيت وتحميل البيانات
+# تحميل وحفظ البيانات عبر Google Sheets
 # =====================================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     try:
-        # قراءة البيانات من التابات المحددة
-        rev = conn.read(spreadsheet=SHEET_URL, worksheet="revenue", ttl="0")
-        exp = conn.read(spreadsheet=SHEET_URL, worksheet="expenses", ttl="0")
-    except Exception as e:
-        st.error(f"خطأ في الاتصال بالشيت: {e}")
+        # قراءة البيانات مباشرة من الشيت (تعطيل الكاش ttl=0 لضمان التحديث اللحظي)
+        rev = conn.read(spreadsheet=SHEET_URL, worksheet="revenue", ttl=0)
+        exp = conn.read(spreadsheet=SHEET_URL, worksheet="expenses", ttl=0)
+    except:
         rev = pd.DataFrame(columns=["الدور", "الوحدة", "المالك", "شهر الاستحقاق", "الاشتراك", "المدفوع", "ملاحظات"])
         exp = pd.DataFrame(columns=["التاريخ", "النوع", "التفاصيل", "المبلغ"])
     
-    # تحويل القيم لنوع عددي لضمان صحة الحسابات
     rev["الاشتراك"] = pd.to_numeric(rev["الاشتراك"], errors="coerce").fillna(0)
     rev["المدفوع"] = pd.to_numeric(rev["المدفوع"], errors="coerce").fillna(0)
     exp["المبلغ"] = pd.to_numeric(exp["المبلغ"], errors="coerce").fillna(0)
@@ -43,20 +46,17 @@ def load_data():
 
 def save_all(rev_df, exp_df):
     try:
-        # تحديث البيانات في جوجل شيت
         conn.update(spreadsheet=SHEET_URL, worksheet="revenue", data=rev_df)
         conn.update(spreadsheet=SHEET_URL, worksheet="expenses", data=exp_df)
-        st.success("✅ تم حفظ البيانات في جوجل شيت بنجاح!")
+        st.success("✅ تم تحديث البيانات في جوجل شيت!")
     except Exception as e:
         st.error(f"فشل الحفظ: {e}")
 
-# تحميل البيانات عند بدء التشغيل
 revenue, expenses = load_data()
 
 # =====================================================
 # القائمة الجانبية
 # =====================================================
-st.sidebar.title("🏢 إدارة اتحاد الملاك")
 menu = st.sidebar.radio("القائمة الرئيسية", ["لوحة التحكم", "الإيرادات", "المصاريف", "المتأخرات", "التقارير الاحترافية"])
 
 # =====================================================
@@ -94,14 +94,14 @@ elif menu == "الإيرادات":
             c4, c5, c6 = st.columns(3)
             d4 = c4.text_input("الشهر المستحق", value=datetime.now().strftime("%m/%Y"))
             d5, d6 = c5.number_input("الاشتراك", 0), c6.number_input("المدفوع", 0)
-            if st.form_submit_button("حفظ وإرسال لجوجل شيت"):
+            if st.form_submit_button("حفظ"):
                 new_row = pd.DataFrame([[d1, d2, d3, d4, d5, d6, ""]], columns=revenue.columns)
                 revenue = pd.concat([revenue, new_row], ignore_index=True)
                 save_all(revenue, expenses)
                 st.rerun()
     with t2:
         edited_rev = st.data_editor(revenue, num_rows="dynamic", key="rev_ed")
-        if st.button("حفظ كافة التعديلات"):
+        if st.button("حفظ التعديلات"):
             save_all(edited_rev, expenses)
             st.rerun()
 
@@ -124,12 +124,12 @@ elif menu == "المصاريف":
                 st.rerun()
     with te2:
         edited_exp = st.data_editor(expenses, num_rows="dynamic", key="exp_ed")
-        if st.button("حفظ كافة التعديلات"):
+        if st.button("حفظ التعديلات"):
             save_all(revenue, edited_exp)
             st.rerun()
 
 # =====================================================
-# 4. المتأخرات
+# 4. المتأخرات (تنسيق HTML الفاخر)
 # =====================================================
 elif menu == "المتأخرات":
     st.subheader("⚠️ كشف المتأخرات")
@@ -138,32 +138,47 @@ elif menu == "المتأخرات":
     
     if not late.empty:
         late_html = f"""
-        <div style="direction: rtl; font-family: 'Segoe UI', sans-serif; padding: 25px; border: 3px solid #e74c3c; border-radius: 15px; background: white;">
-            <h2 style="color: #c0392b; text-align: center;">⚠️ تنبيه هام: كشف مديونيات السكان</h2>
-            <p style="text-align: center;">يرجى التكرم بسداد المتأخرات لضمان استمرار الخدمات.</p>
-            <table style="width: 100%; border-collapse: collapse;">
-                <tr style="background: #c0392b; color: white;">
-                    <th>المالك</th><th>الوحدة</th><th>الشهر</th><th>المبلغ</th>
-                </tr>
-                {" ".join([f"<tr><td style='border: 1px solid #ddd; padding: 10px; text-align: center;'>{r['المالك']}</td><td style='border: 1px solid #ddd; padding: 10px; text-align: center;'>{r['الوحدة']}</td><td style='border: 1px solid #ddd; padding: 10px; text-align: center;'>{r['شهر الاستحقاق']}</td><td style='border: 1px solid #ddd; padding: 10px; text-align: center; color:red; font-weight:bold;'>{int(r['المتبقي']):,}</td></tr>" for _, r in late.iterrows()])}
-            </table>
-        </div>
+        <!DOCTYPE html>
+        <html lang="ar">
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ direction: rtl; font-family: 'Segoe UI', sans-serif; padding: 20px; }}
+                .container {{ padding: 25px; border: 3px solid #e74c3c; border-radius: 15px; background: white; }}
+                .msg {{ text-align: center; color: #2c3e50; font-size: 17px; font-weight: bold; background: #fdf2f2; padding: 15px; border-radius: 10px; margin-bottom: 20px; }}
+                table {{ width: 100%; border-collapse: collapse; }}
+                th {{ background: #c0392b; color: white; padding: 12px; border: 1px solid #ddd; }}
+                td {{ padding: 10px; border: 1px solid #ddd; text-align: center; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h2 style="color: #c0392b; text-align: center;">⚠️ تنبيه هام: كشف مديونيات السكان</h2>
+                <p class="msg">يرجى التكرم من السادة الملاك المذكور أسماؤهم أدناه سرعة سداد المتأخرات لضمان استمرار كافة خدمات العمارة دون انقطاع.</p>
+                <table>
+                    <tr><th>المالك</th><th>الوحدة</th><th>الشهر</th><th>المبلغ المطلوب</th></tr>
+                    {" ".join([f"<tr><td>{r['المالك']}</td><td>{r['الوحدة']}</td><td>{r['شهر الاستحقاق']}</td><td style='color:red; font-weight:bold;'>{int(r['المتبقي']):,}</td></tr>" for _, r in late.iterrows()])}
+                </table>
+            </div>
+        </body>
+        </html>
         """
         st.components.v1.html(late_html, height=500, scrolling=True)
+        st.download_button("📥 تحميل كشف المتأخرات", late_html, "Late_Report.html", "text/html")
     else:
         st.success("🎉 لا توجد متأخرات!")
 
 # =====================================================
-# 5. التقارير الاحترافية
+# 5. التقارير الاحترافية (التنسيق الرسمي الكامل)
 # =====================================================
 elif menu == "التقارير الاحترافية":
     st.title("📑 التقارير المالية الاحترافية")
     rep_mode = st.selectbox("نوع التقرير", ["تقرير مجمع شامل", "تقرير شهري تفصيلي"])
-    sel_m = st.selectbox("اختر الشهر", sorted(revenue["شهر الاستحقاق"].unique(), reverse=True)) if rep_mode == "تقرير شهري تفصيلي" else ""
+    sel_m = st.selectbox("اختر الشهر", revenue["شهر الاستحقاق"].unique()) if rep_mode == "تقرير شهري تفصيلي" else ""
 
     if st.button("توليد التقرير الفاخر"):
         df_r = revenue[revenue["شهر الاستحقاق"] == sel_m].copy() if sel_m else revenue.copy()
-        table_title = f"📋 كشف اشتراكات الوحدات لعام/شهر {sel_m}" if sel_m else "📋 كشف اشتراكات الوحدات (شامل)"
+        table_title = f"📋 كشف اشتراكات الوحدات لشهر {sel_m}" if sel_m else "📋 كشف اشتراكات الوحدات (شامل)"
 
         def get_h(row):
             d = row['الاشتراك'] - row['المدفوع']
@@ -175,18 +190,41 @@ elif menu == "التقارير الاحترافية":
         s_t, p_t, e_t = df_r["الاشتراك"].sum(), df_r["المدفوع"].sum(), expenses["المبلغ"].sum()
 
         full_html = f"""
-        <div style="direction: rtl; font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f0f2f5; padding: 20px; border-radius: 20px;">
-            <div style="background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
-                <div style="color: #1a2a6c; text-align: center; font-size: 28px; font-weight: bold; border-bottom: 5px solid #3498db; padding-bottom: 15px;">التقرير المالي الرسمي</div>
-                <div style="display: flex; gap: 10px; margin: 20px 0; justify-content: space-around;">
-                    <div style="background: #1e3c72; color: white; padding: 15px; border-radius: 10px; text-align: center; flex: 1;"><h3>المطلوب</h3><p>{int(s_t):,}</p></div>
-                    <div style="background: #11998e; color: white; padding: 15px; border-radius: 10px; text-align: center; flex: 1;"><h3>المحصل</h3><p>{int(p_t):,}</p></div>
-                    <div style="background: #cb2d3e; color: white; padding: 15px; border-radius: 10px; text-align: center; flex: 1;"><h3>المصاريف</h3><p>{int(e_t):,}</p></div>
+        <!DOCTYPE html>
+        <html lang="ar">
+        <head>
+            <meta charset="UTF-8">
+            <style>
+                body {{ direction: rtl; font-family: 'Segoe UI', Tahoma, sans-serif; padding: 20px; background-color: #f0f2f5; }}
+                .report-card {{ background: white; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); max-width: 1000px; margin: auto; }}
+                .header-title {{ color: #1a2a6c; text-align: center; font-size: 32px; font-weight: bold; margin-bottom: 10px; border-bottom: 5px solid #3498db; padding-bottom: 15px; }}
+                .stat-box {{ display: flex; gap: 15px; margin: 30px 0; }}
+                .card {{ flex: 1; padding: 20px; border-radius: 15px; text-align: center; color: white; }}
+                .blue {{ background: linear-gradient(135deg, #1e3c72, #2a5298); }}
+                .green {{ background: linear-gradient(135deg, #11998e, #38ef7d); }}
+                .red {{ background: linear-gradient(135deg, #cb2d3e, #ef473a); }}
+                .dark {{ background: linear-gradient(135deg, #232526, #414345); }}
+                table {{ width: 100%; border-collapse: collapse; margin-top: 25px; }}
+                th {{ background-color: #1a2a6c; color: white; padding: 15px; }}
+                td {{ padding: 12px; border: 1px solid #eee; text-align: center; }}
+            </style>
+        </head>
+        <body>
+            <div class="report-card">
+                <div class="header-title">التقرير المالي الرسمي</div>
+                <div class="stat-box">
+                    <div class="card blue"><h3>المطلوب</h3><p>{int(s_t):,}</p></div>
+                    <div class="card green"><h3>المحصل</h3><p>{int(p_t):,}</p></div>
+                    <div class="card red"><h3>المصروفات</h3><p>{int(e_t):,}</p></div>
+                    <div class="card dark"><h3>الصافي</h3><p>{int(p_t - e_t):,}</p></div>
                 </div>
-                <h3 style="color: #1a2a6c;">{table_title}</h3>
-                {df_r.to_html(index=False, escape=False, classes='table')}
+                <h3>{table_title}</h3>
+                {df_r.to_html(index=False, escape=False)}
+                <h3 style="margin-top:40px;">💸 كشف المصروفات</h3>
+                {expenses.to_html(index=False)}
             </div>
-        </div>
+        </body>
+        </html>
         """
-        st.components.v1.html(full_html, height=800, scrolling=True)
-        st.download_button("💾 تحميل التقرير (HTML)", full_html, "Official_Report.html", "text/html")
+        st.components.v1.html(full_html, height=700, scrolling=True)
+        st.download_button("💾 تحميل التقرير للطباعة", full_html, "Report.html", "text/html")
