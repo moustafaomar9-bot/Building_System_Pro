@@ -32,24 +32,24 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
     try:
-        # قراءة البيانات مع تعطيل الكاش لضمان الدقة اللحظية
+        # محاولة القراءة مع تعطيل الكاش نهائياً
         rev = conn.read(spreadsheet=SHEET_URL, worksheet="revenue", ttl=0)
         exp = conn.read(spreadsheet=SHEET_URL, worksheet="expenses", ttl=0)
+        
+        # إذا نجحت القراءة ولكن الجداول فارغة، فقد تكون المشكلة في أسماء الأعمدة
+        if rev.empty:
+            st.warning("⚠️ تم الاتصال بصفحة revenue ولكنها لا تحتوي على بيانات أو الأعمدة غير صحيحة.")
+            
+        return rev, exp
     except Exception as e:
-        st.error(f"خطأ في الاتصال: تأكد من تسمية الصفحات بـ revenue و expenses")
+        # عرض الخطأ التقني الصريح لك
+        st.error(f"❌ خطأ تقني في الاتصال بـ Google Sheets:")
+        st.info(f"وصف الخطأ: {e}")
+        
+        # إنشاء جداول فارغة للسماح للتطبيق بالتحميل
         rev = pd.DataFrame(columns=["الدور", "الوحدة", "المالك", "شهر الاستحقاق", "الاشتراك", "المدفوع", "ملاحظات"])
         exp = pd.DataFrame(columns=["التاريخ", "الشهر", "النوع", "التفاصيل", "المبلغ"])
-    
-    # تنظيف البيانات
-    rev["شهر الاستحقاق"] = rev["شهر الاستحقاق"].astype(str).replace(['nan', 'None', '<NA>'], '')
-    rev["الاشتراك"] = pd.to_numeric(rev["الاشتراك"], errors="coerce").fillna(0)
-    rev["المدفوع"] = pd.to_numeric(rev["المدفوع"], errors="coerce").fillna(0)
-    
-    if "الشهر" not in exp.columns: exp["الشهر"] = ""
-    exp["الشهر"] = exp["الشهر"].astype(str).replace(['nan', 'None', '<NA>'], '')
-    exp["المبلغ"] = pd.to_numeric(exp["المبلغ"], errors="coerce").fillna(0)
-    
-    return rev, exp
+        return rev, exp
 
 def save_all(rev_df, exp_df):
     try:
