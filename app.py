@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 from datetime import datetime
 import arabic_reshaper
 from bidi.algorithm import get_display
-from streamlit_gsheets import GSheetsConnection
 
 # إعداد الصفحة
 st.set_page_config(page_title="نظام إدارة العمارة", layout="wide")
@@ -16,197 +15,87 @@ def ar(text):
     reshaped = arabic_reshaper.reshape(str(text))
     return get_display(reshaped)
 
-# رابط الجوجل شيت
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1_X5q3PkdJHbgiLCqZICsFEQdSVzAsDwjC2gN5mHYuuw"
+# ⚠️ ضع هنا الرابط الذي نسخته من خطوة النشر ⚠️
+GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQVG3VxOUGh0YgFlKGZlhO1e0iurf3Pu0w0e35u2F72mz2dL3UHtbbz6xx63uP8Uefz9MFmJ-gW4eOV/pub?output=csv"
 
-# إنشاء الاتصال
-def get_connection():
-    try:
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        return conn
-    except Exception as e:
-        st.error(f"خطأ في الاتصال: {e}")
-        return None
-
-# دالة للحصول على جميع أسماء الأوراق في الجوجل شيت
-def get_all_worksheets(conn):
-    try:
-        # قراءة البيانات بدون تحديد ورقة للحصول على معلومات الأوراق
-        spread = conn.read(spreadsheet=SHEET_URL, worksheet=None)
-        if hasattr(spread, 'keys'):
-            return list(spread.keys())
-    except:
-        pass
-    return []
-
-# تحميل البيانات
+# تحميل البيانات مباشرة من رابط CSV
 @st.cache_data(ttl=60)
 def load_data():
-    empty_rev = pd.DataFrame()
-    empty_exp = pd.DataFrame()
-    
     try:
-        conn = get_connection()
-        if conn is None:
-            return empty_rev, empty_exp, []
+        # قراءة البيانات مباشرة من رابط CSV
+        df = pd.read_csv(GOOGLE_SHEET_CSV_URL)
         
-        # الحصول على جميع أسماء الأوراق
-        all_sheets = get_all_worksheets(conn)
+        # إعادة تسمية الأعمدة حسب ما يتوقعه البرنامج
+        # شوف الأعمدة الموجودة في ملفك من الصورة:
+        # الدور, الوحدة, المالك, شهر الاستحقاق, الاشتراك, المدفوع, ملاحظات
         
-        if not all_sheets:
-            # محاولة قراءة كل الأوراق مرة واحدة
-            try:
-                all_data = conn.read(spreadsheet=SHEET_URL, worksheet=None)
-                if all_data:
-                    all_sheets = list(all_data.keys())
-            except:
-                pass
+        # تأكد من وجود الأعمدة المطلوبة
+        required_columns = ['الدور', 'الوحدة', 'المالك', 'شهر الاستحقاق', 'الاشتراك', 'المدفوع']
         
-        st.sidebar.info(f"📄 الأوراق الموجودة في الجوجل شيت: {all_sheets if all_sheets else 'لا يمكن تحديدها'}")
+        # إذا كانت الأعمدة بأسماء مختلفة، غيرها هنا
+        # مثال: إذا كان اسم عمود المالك هو "صاحب الوحدة"
+        # column_mapping = {'صاحب الوحدة': 'المالك'}
+        # df = df.rename(columns=column_mapping)
         
-        # محاولة العثور على أي ورقة تحتوي على بيانات الإيرادات
-        revenue = empty_rev
-        expenses = empty_exp
+        # تحويل الأعمدة الرقمية
+        df['الاشتراك'] = pd.to_numeric(df['الاشتراك'], errors='coerce').fillna(0)
+        df['المدفوع'] = pd.to_numeric(df['المدفوع'], errors='coerce').fillna(0)
         
-        if all_sheets:
-            for sheet_name in all_sheets:
-                try:
-                    df = conn.read(worksheet=sheet_name, spreadsheet=SHEET_URL, ttl=0)
-                    if df is not None and not df.empty:
-                        # التحقق من أن هذه الورقة تحتوي على بيانات إيرادات (وجود عمود المالك أو الوحدة)
-                        if any(col in str(df.columns) for col in ['مالك', 'وحدة', 'دور', 'شهر']):
-                            if revenue.empty:
-                                revenue = df
-                                st.sidebar.success(f"✅ تم العثور على بيانات الإيرادات في ورقة: {sheet_name}")
-                        # التحقق من وجود بيانات مصروفات
-                        elif any(col in str(df.columns) for col in ['نوع', 'مبلغ', 'تاريخ']):
-                            if expenses.empty:
-                                expenses = df
-                                st.sidebar.success(f"✅ تم العثور على بيانات المصروفات في ورقة: {sheet_name}")
-                except:
-                    continue
+        # تنظيف الشهور
+        df['شهر الاستحقاق'] = df['شهر الاستحقاق'].astype(str).str.strip()
         
-        # إذا لم نعثر على أي ورقة، نحاول قراءة أول ورقة
-        if revenue.empty:
-            try:
-                first_sheet = all_sheets[0] if all_sheets else None
-                if first_sheet:
-                    revenue = conn.read(worksheet=first_sheet, spreadsheet=SHEET_URL, ttl=0)
-                    st.sidebar.warning(f"⚠️ تم استخدام أول ورقة: {first_sheet}")
-            except:
-                pass
+        # التأكد من وجود عمود الملاحظات
+        if 'ملاحظات' not in df.columns:
+            df['ملاحظات'] = ""
         
-        return revenue, expenses, all_sheets
+        st.success(f"✅ تم تحميل {len(df)} سجل بنجاح!")
+        return df
         
     except Exception as e:
         st.error(f"خطأ في تحميل البيانات: {str(e)}")
-        return empty_rev, empty_exp, []
+        st.info("""
+        **الحل:**
+        1. افتح جوجل شيت
+        2. اضغط على ملف ← مشاركة ← نشر على الويب
+        3. اختر الورقة ← CSV ← نشر
+        4. انسخ الرابط وضعه في المتغير GOOGLE_SHEET_CSV_URL
+        """)
+        return pd.DataFrame()
 
 # تحميل البيانات
-revenue, expenses, all_sheets = load_data()
-
-# عرض أسماء الأوراق للمستخدم
-if all_sheets:
-    st.sidebar.markdown("---")
-    st.sidebar.write("📋 **الأوراق الموجودة:**")
-    for sheet in all_sheets:
-        st.sidebar.write(f"- {sheet}")
-
-# تنظيف البيانات
-if not revenue.empty:
-    # إعادة تسمية الأعمدة لتوحيدها
-    column_mapping = {}
-    for col in revenue.columns:
-        col_str = str(col)
-        if 'دور' in col_str:
-            column_mapping[col] = 'الدور'
-        elif 'وحدة' in col_str:
-            column_mapping[col] = 'الوحدة'
-        elif 'مالك' in col_str:
-            column_mapping[col] = 'المالك'
-        elif 'شهر' in col_str:
-            column_mapping[col] = 'شهر الاستحقاق'
-        elif 'اشتراك' in col_str or 'مطلوب' in col_str:
-            column_mapping[col] = 'الاشتراك'
-        elif 'مدفوع' in col_str or 'محصل' in col_str:
-            column_mapping[col] = 'المدفوع'
-        elif 'ملاحظات' in col_str:
-            column_mapping[col] = 'ملاحظات'
-    
-    revenue = revenue.rename(columns=column_mapping)
-    
-    # تحويل الأعمدة الرقمية
-    if 'الاشتراك' in revenue.columns:
-        revenue['الاشتراك'] = pd.to_numeric(revenue['الاشتراك'], errors='coerce').fillna(0)
-    else:
-        revenue['الاشتراك'] = 0
-        
-    if 'المدفوع' in revenue.columns:
-        revenue['المدفوع'] = pd.to_numeric(revenue['المدفوع'], errors='coerce').fillna(0)
-    else:
-        revenue['المدفوع'] = 0
-        
-    if 'شهر الاستحقاق' not in revenue.columns:
-        revenue['شهر الاستحقاق'] = ""
-    else:
-        revenue['شهر الاستحقاق'] = revenue['شهر الاستحقاق'].astype(str).str.strip()
-    
-    if 'الدور' not in revenue.columns:
-        revenue['الدور'] = ""
-    if 'الوحدة' not in revenue.columns:
-        revenue['الوحدة'] = ""
-    if 'المالك' not in revenue.columns:
-        revenue['المالك'] = ""
-    if 'ملاحظات' not in revenue.columns:
-        revenue['ملاحظات'] = ""
-
-if not expenses.empty:
-    for col in expenses.columns:
-        col_str = str(col)
-        if 'مبلغ' in col_str:
-            expenses['المبلغ'] = pd.to_numeric(expenses[col], errors='coerce').fillna(0)
-        elif 'تاريخ' in col_str:
-            expenses['التاريخ'] = expenses[col]
-        elif 'شهر' in col_str:
-            expenses['الشهر'] = expenses[col]
-        elif 'نوع' in col_str:
-            expenses['النوع'] = expenses[col]
-        elif 'تفاصيل' in col_str:
-            expenses['التفاصيل'] = expenses[col]
+revenue = load_data()
+expenses = pd.DataFrame()  # مصروفات - يمكن إضافتها لاحقاً
 
 def get_sorted_months(df, col):
     if df.empty or col not in df.columns:
         return []
-    months = [str(m) for m in df[col].unique() if str(m).strip() and str(m).lower() != 'nan' and str(m) != '' and len(str(m)) > 4]
+    months = [str(m) for m in df[col].unique() if str(m).strip() and str(m).lower() != 'nan' and str(m) != '']
     return sorted(months, reverse=True)
 
-# عرض حالة البيانات
-if revenue.empty:
-    st.warning("⚠️ لم يتم العثور على بيانات")
-    st.info("""
-    **الرجاء التأكد من:**
-    
-    1. تم مشاركة الجوجل شيت مع البريد: `phone-952@phoneproject.iam.gserviceaccount.com`
-    2. في الجوجل شيت، اضغط على "مشاركة" وأضف هذا البريد بصلاحية "محرر"
-    3. انتظر 2-3 دقائق بعد المشاركة
-    4. ثم اضغط على زر "تحديث البيانات" في الشريط الجانبي
-    
-    **ملاحظة:** الكود الآن سيبحث تلقائياً عن أي ورقة تحتوي على بيانات، بغض النظر عن اسمها.
-    """)
-else:
-    st.success(f"✅ تم تحميل {len(revenue)} سجل بنجاح!")
-    
-    # عرض معاينة للبيانات
-    with st.sidebar.expander("📊 معاينة البيانات"):
-        st.write(revenue.head(10))
-
-menu = st.sidebar.radio("📋 القائمة الرئيسية", ["🏠 لوحة التحكم", "💰 الإيرادات", "💸 المصروفات", "⚠️ المتأخرات", "📊 التقارير"])
+menu = st.sidebar.radio("📋 القائمة الرئيسية", ["🏠 لوحة التحكم", "💰 الإيرادات", "⚠️ المتأخرات", "📊 التقارير"])
 
 if menu == "🏠 لوحة التحكم":
     st.title("📊 ملخص المركز المالي")
     
     if revenue.empty:
-        st.info("📭 لا توجد بيانات لعرضها")
+        st.info("📭 لا توجد بيانات")
+        st.markdown("""
+        ### خطوات ربط جوجل شيت:
+        
+        1. **افتح جوجل شيت** من [هذا الرابط](https://docs.google.com/spreadsheets/d/1_X5q3PkdJHbgiLCqZICsFEQdSVzAsDwjC2gN5mHYuuw/edit)
+        
+        2. **اذهب إلى: ملف ← مشاركة ← نشر على الويب**
+        
+        3. **اختر الورقة** التي فيها البيانات
+        
+        4. **اختر CSV** من القائمة
+        
+        5. **اضغط نشر** وانسخ الرابط
+        
+        6. **الصق الرابط** في الكود (السطر 22)
+        
+        7. **اضغط على زر التحديث** 👇
+        """)
     else:
         all_m = get_sorted_months(revenue, "شهر الاستحقاق")
         if all_m:
@@ -221,22 +110,40 @@ if menu == "🏠 لوحة التحكم":
             col1, col2, col3 = st.columns(3)
             col1.metric("💰 المطلوب", f"{int(t_sub):,} جنيه")
             col2.metric("✅ المحصل", f"{int(t_paid):,} جنيه")
-            col3.metric("📈 صافي المتبقي", f"{int(net):,} جنيه")
+            col3.metric("📈 المتبقي", f"{int(net):,} جنيه")
             
-            if not df_r.empty:
-                st.subheader("📋 تفاصيل الإيرادات")
-                df_r_display = df_r.copy()
-                df_r_display["المتبقي"] = df_r_display["الاشتراك"] - df_r_display["المدفوع"]
-                df_r_display["الحالة"] = df_r_display["المتبقي"].apply(lambda x: "🔴 متأخر" if x > 0 else "🟢 مدفوع")
-                st.dataframe(df_r_display[["الدور", "الوحدة", "المالك", "الاشتراك", "المدفوع", "المتبقي", "الحالة", "ملاحظات"]], use_container_width=True)
+            # الرسم البياني
+            fig, ax = plt.subplots(figsize=(10, 5))
+            categories = [ar("المطلوب"), ar("المحصل")]
+            values = [t_sub, t_paid]
+            colors = ['#3498db', '#2ecc71']
+            bars = ax.bar(categories, values, color=colors, width=0.5, edgecolor='black', linewidth=2)
+            for bar, val in zip(bars, values):
+                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 50, f'{int(val):,}', ha='center', va='bottom', fontweight='bold', fontsize=12)
+            ax.set_ylabel("القيمة (جنيه)", fontsize=12)
+            ax.set_title(f"🏢 الملخص المالي لشهر {sel_m}", fontsize=16, fontweight='bold')
+            ax.grid(axis='y', alpha=0.3)
+            st.pyplot(fig)
+            
+            # عرض الجدول
+            st.subheader("📋 تفاصيل الإيرادات")
+            df_r["المتبقي"] = df_r["الاشتراك"] - df_r["المدفوع"]
+            df_r["الحالة"] = df_r["المتبقي"].apply(lambda x: "🔴 متأخر" if x > 0 else "🟢 مدفوع")
+            
+            # اختيار الأعمدة الموجودة
+            display_cols = []
+            for col in ['الدور', 'الوحدة', 'المالك', 'الاشتراك', 'المدفوع', 'المتبقي', 'الحالة', 'ملاحظات']:
+                if col in df_r.columns:
+                    display_cols.append(col)
+            
+            st.dataframe(df_r[display_cols], use_container_width=True)
         else:
-            st.info("لا توجد شهور صالحة في البيانات")
+            st.info("لا توجد شهور")
 
 elif menu == "💰 الإيرادات":
     st.title("💰 جدول الإيرادات")
-    
     if revenue.empty:
-        st.warning("⚠️ لا توجد بيانات إيرادات")
+        st.warning("⚠️ لا توجد بيانات")
     else:
         st.dataframe(revenue, use_container_width=True)
         
@@ -247,17 +154,8 @@ elif menu == "💰 الإيرادات":
         col2.metric("اجمالي المحصل", f"{int(total_paid):,} جنيه")
         col3.metric("المتبقي", f"{int(total_required - total_paid):,} جنيه")
 
-elif menu == "💸 المصروفات":
-    st.title("💸 جدول المصروفات")
-    
-    if expenses.empty:
-        st.info("📭 لا توجد بيانات مصروفات. قم بإضافة ورقة للمصروفات في الجوجل شيت")
-    else:
-        st.dataframe(expenses, use_container_width=True)
-
 elif menu == "⚠️ المتأخرات":
     st.title("⚠️ كشف المتأخرات")
-    
     if revenue.empty:
         st.info("لا توجد بيانات")
     else:
@@ -270,14 +168,17 @@ elif menu == "⚠️ المتأخرات":
             col1.metric("💰 اجمالي المتأخرات", f"{int(total_late):,} جنيه")
             col2.metric("📊 عدد الوحدات المتأخرة", f"{len(late)} وحدة")
             
-            late_display = late[["المالك", "الوحدة", "الدور", "شهر الاستحقاق", "الاشتراك", "المدفوع", "المتبقي", "ملاحظات"]]
-            st.dataframe(late_display, use_container_width=True)
+            display_cols = []
+            for col in ['المالك', 'الوحدة', 'الدور', 'شهر الاستحقاق', 'الاشتراك', 'المدفوع', 'المتبقي']:
+                if col in late.columns:
+                    display_cols.append(col)
+            
+            st.dataframe(late[display_cols], use_container_width=True)
         else:
             st.success("🎉 لا توجد متأخرات!")
 
 elif menu == "📊 التقارير":
     st.title("📊 التقارير المالية")
-    
     if revenue.empty:
         st.info("لا توجد بيانات")
     else:
@@ -289,17 +190,18 @@ elif menu == "📊 التقارير":
             if st.button("📄 توليد التقرير", use_container_width=True):
                 total_required = df_r["الاشتراك"].sum()
                 total_paid = df_r["المدفوع"].sum()
-                net_profit = total_paid - total_required
                 
                 col1, col2, col3 = st.columns(3)
                 col1.metric("المطلوب", f"{int(total_required):,} جنيه")
                 col2.metric("المحصل", f"{int(total_paid):,} جنيه")
-                col3.metric("المتبقي", f"{int(net_profit):,} جنيه")
+                col3.metric("نسبة التحصيل", f"{int((total_paid/total_required)*100) if total_required > 0 else 0}%")
                 
                 df_r["المتبقي"] = df_r["الاشتراك"] - df_r["المدفوع"]
-                st.dataframe(df_r[["الدور", "الوحدة", "المالك", "الاشتراك", "المدفوع", "المتبقي"]], use_container_width=True)
-        else:
-            st.info("لا توجد شهور صالحة")
+                display_cols = []
+                for col in ['الدور', 'الوحدة', 'المالك', 'الاشتراك', 'المدفوع', 'المتبقي']:
+                    if col in df_r.columns:
+                        display_cols.append(col)
+                st.dataframe(df_r[display_cols], use_container_width=True)
 
 st.sidebar.markdown("---")
 
