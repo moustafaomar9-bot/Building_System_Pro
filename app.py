@@ -16,12 +16,11 @@ def ar(text):
     reshaped = arabic_reshaper.reshape(str(text))
     return get_display(reshaped)
 
-# رابط الجوجل شيت (بدون تعديل)
+# رابط الجوجل شيت
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1_X5q3PkdJHbgiLCqZICsFEQdSVzAsDwjC2gN5mHYuuw"
 
-# إنشاء الاتصال
-@st.cache_resource
-def init_connection():
+# إنشاء الاتصال (بدون cache_resource)
+def get_connection():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
         return conn
@@ -29,12 +28,9 @@ def init_connection():
         st.error(f"خطأ في الاتصال: {e}")
         return None
 
-# تحميل البيانات
+# تحميل البيانات (بدون تمرير conn كمعامل)
 @st.cache_data(ttl=60)
-def load_data(conn):
-    if conn is None:
-        return pd.DataFrame(), pd.DataFrame()
-    
+def load_data():
     revenue_columns = ["الدور", "الوحدة", "المالك", "شهر الاستحقاق", "الاشتراك", "المدفوع", "ملاحظات"]
     expenses_columns = ["التاريخ", "الشهر", "النوع", "التفاصيل", "المبلغ"]
     
@@ -42,6 +38,10 @@ def load_data(conn):
     empty_exp = pd.DataFrame(columns=expenses_columns)
     
     try:
+        conn = get_connection()
+        if conn is None:
+            return empty_rev, empty_exp
+        
         # محاولة قراءة ورقة revenue
         try:
             revenue = conn.read(worksheet="revenue", spreadsheet=SHEET_URL, ttl=0)
@@ -52,7 +52,7 @@ def load_data(conn):
                     if col not in revenue.columns:
                         revenue[col] = "" if col not in ["الاشتراك", "المدفوع"] else 0
         except Exception as e:
-            st.warning(f"ورقة revenue غير موجودة: {e}")
+            st.warning(f"ورقة revenue غير موجودة أو لا يمكن قراءتها")
             revenue = empty_rev
         
         # محاولة قراءة ورقة expenses
@@ -65,18 +65,21 @@ def load_data(conn):
                     if col not in expenses.columns:
                         expenses[col] = "" if col != "المبلغ" else 0
         except Exception as e:
-            st.warning(f"ورقة expenses غير موجودة: {e}")
+            st.warning(f"ورقة expenses غير موجودة أو لا يمكن قراءتها")
             expenses = empty_exp
         
         return revenue, expenses
         
     except Exception as e:
-        st.error(f"خطأ في تحميل البيانات: {e}")
+        st.error(f"خطأ في تحميل البيانات: {str(e)}")
         return empty_rev, empty_exp
 
 # حفظ البيانات
-def save_data(conn, revenue_df, expenses_df):
+def save_data(revenue_df, expenses_df):
     try:
+        conn = get_connection()
+        if conn is None:
+            return False
         conn.update(worksheet="revenue", data=revenue_df, spreadsheet=SHEET_URL)
         conn.update(worksheet="expenses", data=expenses_df, spreadsheet=SHEET_URL)
         st.success("✅ تم حفظ البيانات بنجاح!")
@@ -85,11 +88,8 @@ def save_data(conn, revenue_df, expenses_df):
         st.error(f"❌ خطأ في الحفظ: {e}")
         return False
 
-# تهيئة الاتصال
-conn = init_connection()
-
 # تحميل البيانات
-revenue, expenses = load_data(conn)
+revenue, expenses = load_data()
 
 # تنظيف البيانات
 if not revenue.empty:
@@ -110,29 +110,35 @@ def get_sorted_months(df, col):
     months = [m for m in months if m and m != '']
     return sorted(months, reverse=True)
 
-# التحقق من وجود بيانات وعرض رسالة
-if revenue.empty and conn is not None:
-    st.warning("⚠️ لا توجد بيانات في جوجل شيت")
-    st.info("""
-    **خطوات إنشاء البيانات في جوجل شيت:**
-    
-    1. افتح رابط الجوجل شيت (سيتم فتحه تلقائياً)
-    2. قم بإنشاء ورقتين بالاسمين: `revenue` و `expenses`
-    3. في ورقة `revenue` اكتب هذه الأعمدة في الصف الأول:
-       - الدور | الوحدة | المالك | شهر الاستحقاق | الاشتراك | المدفوع | ملاحظات
-    4. في ورقة `expenses` اكتب هذه الأعمدة:
-       - التاريخ | الشهر | النوع | التفاصيل | المبلغ
-    5. شارك الجوجل شيت مع البريد الإلكتروني الذي يظهر في الخطأ أعلاه
-    6. اضغط على زر "تحديث البيانات" في الشريط الجانبي
-    """)
+# التحقق من وجود بيانات
+if revenue.empty:
+    st.sidebar.warning("⚠️ لا توجد بيانات")
+    with st.sidebar.expander("📖 طريقة ربط جوجل شيت", expanded=True):
+        st.markdown(f"""
+        **خطوات ربط جوجل شيت:**
+        
+        1. افتح جوجل شيت من الرابط التالي:
+           https://docs.google.com/spreadsheets/d/1_X5q3PkdJHbgiLCqZICsFEQdSVzAsDwjC2gN5mHYuuw/edit
+        
+        2. اضغط على زر "مشاركة" في أعلى اليمين
+        
+        3. أضف هذا البريد الإلكتروني:
+           `phone-952@phoneproject.iam.gserviceaccount.com`
+        
+        4. اختر صلاحية "محرر"
+        
+        5. اضغط على "إرسال"
+        
+        6. اضغط على زر "تحديث البيانات" في الشريط الجانبي
+        """)
 
-menu = st.sidebar.radio("📋 القائمة الرئيسية", ["🏠 لوحة التحكم", "💰 الإيرادات", "💸 المصاريف", "🆕 بدء شهر جديد", "⚠️ المتأخرات", "📊 التقارير"])
+menu = st.sidebar.radio("📋 القائمة الرئيسية", ["🏠 لوحة التحكم", "💰 الإيرادات", "💸 المصروفات", "🆕 بدء شهر جديد", "⚠️ المتأخرات", "📊 التقارير"])
 
 if menu == "🏠 لوحة التحكم":
     st.title("📊 ملخص المركز المالي")
     
     if revenue.empty:
-        st.info("📭 لا توجد بيانات. قم بإنشاء البيانات في جوجل شيت أولاً")
+        st.info("📭 لا توجد بيانات. يرجى مشاركة جوجل شيت مع حساب الخدمة أولاً")
         if st.button("📝 إنشاء بيانات تجريبية", use_container_width=True):
             sample_rev = pd.DataFrame({
                 "الدور": ["الأول", "الأول", "الثاني", "الثاني", "الثالث"],
@@ -150,7 +156,8 @@ if menu == "🏠 لوحة التحكم":
                 "التفاصيل": ["فاتورة الكهرباء", "راتب العامل", "إصلاحات"],
                 "المبلغ": [300, 200, 150]
             })
-            if save_data(conn, sample_rev, sample_exp):
+            if save_data(sample_rev, sample_exp):
+                st.cache_data.clear()
                 st.rerun()
     else:
         all_m = get_sorted_months(revenue, "شهر الاستحقاق")
@@ -209,7 +216,7 @@ elif menu == "💰 الإيرادات":
         col2.metric("اجمالي المحصل", f"{int(total_paid):,} جنيه")
         col3.metric("المتبقي", f"{int(total_required - total_paid):,} جنيه")
 
-elif menu == "💸 المصاريف":
+elif menu == "💸 المصروفات":
     st.title("💸 جدول المصروفات")
     
     if expenses.empty:
@@ -246,7 +253,8 @@ elif menu == "🆕 بدء شهر جديد":
                         new_rows.append([row["الدور"], row["الوحدة"], row["المالك"], new_m, row["الاشتراك"], 0, note])
                     new_month_data = pd.DataFrame(new_rows, columns=revenue.columns)
                     updated_revenue = pd.concat([revenue, new_month_data], ignore_index=True)
-                    if save_data(conn, updated_revenue, expenses):
+                    if save_data(updated_revenue, expenses):
+                        st.cache_data.clear()
                         st.balloons()
                         st.rerun()
 
@@ -268,6 +276,9 @@ elif menu == "⚠️ المتأخرات":
             late_display = late[["المالك", "الوحدة", "الدور", "شهر الاستحقاق", "الاشتراك", "المدفوع", "المتبقي", "ملاحظات"]]
             late_display = late_display.sort_values("المتبقي", ascending=False)
             st.dataframe(late_display, use_container_width=True)
+            
+            csv = late_display.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(label="📥 تحميل تقرير المتأخرات", data=csv, file_name=f"متاخرات_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
         else:
             st.success("🎉 لا توجد متأخرات! جميع الوحدات مسددة بالكامل.")
             st.balloons()
@@ -319,23 +330,3 @@ st.sidebar.markdown("---")
 if st.sidebar.button("🔄 تحديث البيانات", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
-
-if st.sidebar.button("📝 إنشاء بيانات تجريبية", use_container_width=True):
-    sample_rev = pd.DataFrame({
-        "الدور": ["الأول", "الأول", "الثاني", "الثاني", "الثالث"],
-        "الوحدة": ["101", "102", "201", "202", "301"],
-        "المالك": ["أحمد محمد", "سعيد علي", "محمد إبراهيم", "خالد حسن", "محمود عبدالله"],
-        "شهر الاستحقاق": [datetime.now().strftime("%m/%Y")] * 5,
-        "الاشتراك": [500, 500, 500, 500, 500],
-        "المدفوع": [500, 250, 0, 100, 0],
-        "ملاحظات": ["", "باقي 250", "غير مدفوع", "دفع 100", ""]
-    })
-    sample_exp = pd.DataFrame({
-        "التاريخ": [datetime.now().strftime("%Y-%m-%d")] * 3,
-        "الشهر": [datetime.now().strftime("%m/%Y")] * 3,
-        "النوع": ["كهرباء", "نظافة", "صيانة"],
-        "التفاصيل": ["فاتورة الكهرباء", "راتب العامل", "إصلاحات"],
-        "المبلغ": [300, 200, 150]
-    })
-    if save_data(conn, sample_rev, sample_exp):
-        st.rerun()
