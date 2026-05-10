@@ -19,7 +19,7 @@ def ar(text):
 # رابط الجوجل شيت
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1_X5q3PkdJHbgiLCqZICsFEQdSVzAsDwjC2gN5mHYuuw"
 
-# إنشاء الاتصال (بدون cache_resource)
+# إنشاء الاتصال
 def get_connection():
     try:
         conn = st.connection("gsheets", type=GSheetsConnection)
@@ -28,7 +28,38 @@ def get_connection():
         st.error(f"خطأ في الاتصال: {e}")
         return None
 
-# تحميل البيانات (بدون تمرير conn كمعامل)
+# دالة لإعادة تسمية الأعمدة بشكل صحيح
+def fix_columns(df, expected_columns, sheet_name):
+    if df.empty:
+        return df
+    
+    # محاولة العثور على الأعمدة المطلوبة بغض النظر عن الترتيب
+    column_mapping = {}
+    for col in expected_columns:
+        # البحث عن عمود يحتوي على الاسم (قد يكون هناك اختلاف في التشكيل)
+        found = None
+        for existing_col in df.columns:
+            if col in existing_col or existing_col in col:
+                found = existing_col
+                break
+        if found:
+            column_mapping[found] = col
+        else:
+            # إذا لم نجد العمود، نضيفه كعمود فارغ
+            df[col] = ""
+    
+    # إعادة تسمية الأعمدة
+    df = df.rename(columns=column_mapping)
+    
+    # التأكد من وجود جميع الأعمدة المطلوبة
+    for col in expected_columns:
+        if col not in df.columns:
+            df[col] = ""
+    
+    # إرجاع الأعمدة بالترتيب المطلوب فقط
+    return df[expected_columns]
+
+# تحميل البيانات
 @st.cache_data(ttl=60)
 def load_data():
     revenue_columns = ["الدور", "الوحدة", "المالك", "شهر الاستحقاق", "الاشتراك", "المدفوع", "ملاحظات"]
@@ -45,14 +76,17 @@ def load_data():
         # محاولة قراءة ورقة revenue
         try:
             revenue = conn.read(worksheet="revenue", spreadsheet=SHEET_URL, ttl=0)
+            st.write("تم قراءة البيانات بنجاح، عدد الصفوف:", len(revenue))
+            st.write("الأعمدة الموجودة:", list(revenue.columns))
+            
             if revenue.empty:
                 revenue = empty_rev
             else:
-                for col in revenue_columns:
-                    if col not in revenue.columns:
-                        revenue[col] = "" if col not in ["الاشتراك", "المدفوع"] else 0
+                # إعادة ترتيب الأعمدة
+                revenue = fix_columns(revenue, revenue_columns, "revenue")
+                
         except Exception as e:
-            st.warning(f"ورقة revenue غير موجودة أو لا يمكن قراءتها")
+            st.warning(f"خطأ في قراءة ورقة revenue: {str(e)}")
             revenue = empty_rev
         
         # محاولة قراءة ورقة expenses
@@ -61,11 +95,9 @@ def load_data():
             if expenses.empty:
                 expenses = empty_exp
             else:
-                for col in expenses_columns:
-                    if col not in expenses.columns:
-                        expenses[col] = "" if col != "المبلغ" else 0
+                expenses = fix_columns(expenses, expenses_columns, "expenses")
         except Exception as e:
-            st.warning(f"ورقة expenses غير موجودة أو لا يمكن قراءتها")
+            st.warning(f"خطأ في قراءة ورقة expenses: {str(e)}")
             expenses = empty_exp
         
         return revenue, expenses
@@ -91,46 +123,46 @@ def save_data(revenue_df, expenses_df):
 # تحميل البيانات
 revenue, expenses = load_data()
 
+# عرض حالة البيانات في الشريط الجانبي
+st.sidebar.info(f"📊 عدد صفوف الإيرادات: {len(revenue)}")
+st.sidebar.info(f"📊 عدد صفوف المصروفات: {len(expenses)}")
+
 # تنظيف البيانات
 if not revenue.empty:
-    revenue["شهر الاستحقاق"] = revenue["شهر الاستحقاق"].astype(str).replace(['nan', 'None', '<NA>', ''], '')
+    # تحويل الأعمدة الرقمية
     revenue["الاشتراك"] = pd.to_numeric(revenue["الاشتراك"], errors="coerce").fillna(0)
     revenue["المدفوع"] = pd.to_numeric(revenue["المدفوع"], errors="coerce").fillna(0)
+    revenue["شهر الاستحقاق"] = revenue["شهر الاستحقاق"].astype(str).str.strip()
+    
+    # تنظيف الأرقام غير الصحيحة في الشهور
+    revenue["شهر الاستحقاق"] = revenue["شهر الاستحقاق"].apply(lambda x: x if "/202" in str(x) or "/202" in str(x) else "")
+    
+    # عرض معاينة للبيانات
+    with st.sidebar.expander("معاينة البيانات المستخرجة"):
+        st.write(revenue.head(10))
     
 if not expenses.empty:
-    if "الشهر" not in expenses.columns:
-        expenses["الشهر"] = ""
-    expenses["الشهر"] = expenses["الشهر"].astype(str).replace(['nan', 'None', '<NA>', ''], '')
     expenses["المبلغ"] = pd.to_numeric(expenses["المبلغ"], errors="coerce").fillna(0)
+    expenses["الشهر"] = expenses["الشهر"].astype(str).str.strip()
 
 def get_sorted_months(df, col):
     if df.empty or col not in df.columns:
         return []
-    months = [str(m) for m in df[col].unique() if str(m).strip() and str(m).lower() != 'nan' and str(m) != '']
+    months = [str(m) for m in df[col].unique() if str(m).strip() and str(m).lower() != 'nan' and str(m) != '' and len(str(m)) > 5]
     months = [m for m in months if m and m != '']
     return sorted(months, reverse=True)
 
-# التحقق من وجود بيانات
+# عرض رسالة للمستخدم
 if revenue.empty:
-    st.sidebar.warning("⚠️ لا توجد بيانات")
-    with st.sidebar.expander("📖 طريقة ربط جوجل شيت", expanded=True):
-        st.markdown(f"""
-        **خطوات ربط جوجل شيت:**
-        
-        1. افتح جوجل شيت من الرابط التالي:
-           https://docs.google.com/spreadsheets/d/1_X5q3PkdJHbgiLCqZICsFEQdSVzAsDwjC2gN5mHYuuw/edit
-        
-        2. اضغط على زر "مشاركة" في أعلى اليمين
-        
-        3. أضف هذا البريد الإلكتروني:
-           `phone-952@phoneproject.iam.gserviceaccount.com`
-        
-        4. اختر صلاحية "محرر"
-        
-        5. اضغط على "إرسال"
-        
-        6. اضغط على زر "تحديث البيانات" في الشريط الجانبي
-        """)
+    st.warning("⚠️ لم يتم العثور على بيانات في ورقة revenue")
+    st.info("""
+    **تأكد من:**
+    1. أن ورقة العمل في جوجل شيت اسمها `revenue` (وليس `ورقة1` أو غيره)
+    2. أن الأعمدة تحتوي على عناوين مناسبة (دور, وحدة, مالك, شهر الاستحقاق, اشتراك, مدفوع)
+    3. أن حساب الخدمة phone-952@phoneproject.iam.gserviceaccount.com لديه صلاحية محرر على الجوجل شيت
+    """)
+else:
+    st.success(f"✅ تم تحميل {len(revenue)} سجل من الإيرادات بنجاح!")
 
 menu = st.sidebar.radio("📋 القائمة الرئيسية", ["🏠 لوحة التحكم", "💰 الإيرادات", "💸 المصروفات", "🆕 بدء شهر جديد", "⚠️ المتأخرات", "📊 التقارير"])
 
@@ -138,27 +170,7 @@ if menu == "🏠 لوحة التحكم":
     st.title("📊 ملخص المركز المالي")
     
     if revenue.empty:
-        st.info("📭 لا توجد بيانات. يرجى مشاركة جوجل شيت مع حساب الخدمة أولاً")
-        if st.button("📝 إنشاء بيانات تجريبية", use_container_width=True):
-            sample_rev = pd.DataFrame({
-                "الدور": ["الأول", "الأول", "الثاني", "الثاني", "الثالث"],
-                "الوحدة": ["101", "102", "201", "202", "301"],
-                "المالك": ["أحمد محمد", "سعيد علي", "محمد إبراهيم", "خالد حسن", "محمود عبدالله"],
-                "شهر الاستحقاق": [datetime.now().strftime("%m/%Y")] * 5,
-                "الاشتراك": [500, 500, 500, 500, 500],
-                "المدفوع": [500, 250, 0, 100, 0],
-                "ملاحظات": ["", "باقي 250", "غير مدفوع", "دفع 100", ""]
-            })
-            sample_exp = pd.DataFrame({
-                "التاريخ": [datetime.now().strftime("%Y-%m-%d")] * 3,
-                "الشهر": [datetime.now().strftime("%m/%Y")] * 3,
-                "النوع": ["كهرباء", "نظافة", "صيانة"],
-                "التفاصيل": ["فاتورة الكهرباء", "راتب العامل", "إصلاحات"],
-                "المبلغ": [300, 200, 150]
-            })
-            if save_data(sample_rev, sample_exp):
-                st.cache_data.clear()
-                st.rerun()
+        st.info("📭 لا توجد بيانات لعرضها")
     else:
         all_m = get_sorted_months(revenue, "شهر الاستحقاق")
         if all_m:
@@ -178,28 +190,18 @@ if menu == "🏠 لوحة التحكم":
             col3.metric("💸 المصاريف", f"{int(t_exp):,} جنيه")
             col4.metric("📈 صافي الربح", f"{int(net):,} جنيه")
             
-            fig, ax = plt.subplots(figsize=(10, 5))
-            categories = [ar("المطلوب"), ar("المحصل"), ar("المصاريف")]
-            values = [t_sub, t_paid, t_exp]
-            colors = ['#3498db', '#2ecc71', '#e74c3c']
-            bars = ax.bar(categories, values, color=colors, width=0.5, edgecolor='black', linewidth=2)
-            for bar, val in zip(bars, values):
-                ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 50, f'{int(val):,}', ha='center', va='bottom', fontweight='bold', fontsize=12)
-            ax.set_ylabel("القيمة (جنيه)", fontsize=12)
-            ax.set_title(f"🏢 الملخص المالي لشهر {sel_m}", fontsize=16, fontweight='bold')
-            ax.grid(axis='y', alpha=0.3)
-            st.pyplot(fig)
-            
-            with st.expander("📋 تفاصيل الإيرادات"):
-                df_r["المتبقي"] = df_r["الاشتراك"] - df_r["المدفوع"]
-                df_r["الحالة"] = df_r["المتبقي"].apply(lambda x: "🔴 متأخر" if x > 0 else "🟢 مدفوع")
-                st.dataframe(df_r[["الدور", "الوحدة", "المالك", "الاشتراك", "المدفوع", "المتبقي", "الحالة", "ملاحظات"]], use_container_width=True)
+            if not df_r.empty:
+                st.subheader("📋 تفاصيل الإيرادات")
+                df_r_display = df_r.copy()
+                df_r_display["المتبقي"] = df_r_display["الاشتراك"] - df_r_display["المدفوع"]
+                df_r_display["الحالة"] = df_r_display["المتبقي"].apply(lambda x: "🔴 متأخر" if x > 0 else "🟢 مدفوع")
+                st.dataframe(df_r_display[["الدور", "الوحدة", "المالك", "الاشتراك", "المدفوع", "المتبقي", "الحالة", "ملاحظات"]], use_container_width=True)
             
             if not df_e.empty:
-                with st.expander("💸 تفاصيل المصروفات"):
-                    st.dataframe(df_e[["التاريخ", "النوع", "التفاصيل", "المبلغ"]], use_container_width=True)
+                st.subheader("💸 تفاصيل المصروفات")
+                st.dataframe(df_e[["التاريخ", "النوع", "التفاصيل", "المبلغ"]], use_container_width=True)
         else:
-            st.info("لا توجد شهور مسجلة")
+            st.info("لا توجد شهور صالحة في البيانات. تأكد من أن شهر الاستحقاق مكتوب بشكل صحيح (مثال: 02/2026)")
 
 elif menu == "💰 الإيرادات":
     st.title("💰 جدول الإيرادات")
@@ -225,10 +227,6 @@ elif menu == "💸 المصروفات":
         st.dataframe(expenses, use_container_width=True)
         total_exp = expenses['المبلغ'].sum()
         st.metric("اجمالي المصروفات", f"{int(total_exp):,} جنيه")
-        
-        if 'النوع' in expenses.columns:
-            exp_by_type = expenses.groupby('النوع')['المبلغ'].sum().sort_values(ascending=False)
-            st.bar_chart(exp_by_type)
 
 elif menu == "🆕 بدء شهر جديد":
     st.title("🆕 ترحيل البيانات لشهر جديد")
@@ -239,7 +237,7 @@ elif menu == "🆕 بدء شهر جديد":
         all_m = get_sorted_months(revenue, "شهر الاستحقاق")
         if all_m:
             last_m = st.selectbox("نسخ البيانات من شهر:", all_m)
-            new_m = st.text_input("الشهر الجديد (مثال: 03/2026):", datetime.now().strftime("%m/%Y"))
+            new_m = st.text_input("الشهر الجديد (مثال: 04/2026):", datetime.now().strftime("%m/%Y"))
             
             if st.button("تنفيذ الترحيل", use_container_width=True):
                 if new_m in all_m:
@@ -276,12 +274,8 @@ elif menu == "⚠️ المتأخرات":
             late_display = late[["المالك", "الوحدة", "الدور", "شهر الاستحقاق", "الاشتراك", "المدفوع", "المتبقي", "ملاحظات"]]
             late_display = late_display.sort_values("المتبقي", ascending=False)
             st.dataframe(late_display, use_container_width=True)
-            
-            csv = late_display.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(label="📥 تحميل تقرير المتأخرات", data=csv, file_name=f"متاخرات_{datetime.now().strftime('%Y%m%d')}.csv", mime="text/csv")
         else:
             st.success("🎉 لا توجد متأخرات! جميع الوحدات مسددة بالكامل.")
-            st.balloons()
 
 elif menu == "📊 التقارير":
     st.title("📊 التقارير المالية")
@@ -300,7 +294,6 @@ elif menu == "📊 التقارير":
                 total_paid = df_r["المدفوع"].sum()
                 total_expenses = df_e["المبلغ"].sum() if not df_e.empty else 0
                 net_profit = total_paid - total_expenses
-                payment_rate = (total_paid / total_required * 100) if total_required > 0 else 0
                 
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("المطلوب", f"{int(total_required):,} جنيه")
@@ -308,22 +301,10 @@ elif menu == "📊 التقارير":
                 col3.metric("المصاريف", f"{int(total_expenses):,} جنيه")
                 col4.metric("صافي الربح", f"{int(net_profit):,} جنيه")
                 
-                st.progress(payment_rate / 100)
-                st.caption(f"نسبة التحصيل: {payment_rate:.1f}%")
-                
                 df_r["المتبقي"] = df_r["الاشتراك"] - df_r["المدفوع"]
                 st.dataframe(df_r[["الدور", "الوحدة", "المالك", "الاشتراك", "المدفوع", "المتبقي"]], use_container_width=True)
-                
-                if not df_e.empty:
-                    st.dataframe(df_e[["التاريخ", "النوع", "التفاصيل", "المبلغ"]], use_container_width=True)
-                
-                fig, ax = plt.subplots(figsize=(8, 4))
-                ax.bar(['المطلوب', 'المحصل', 'المصاريف'], [total_required, total_paid, total_expenses], color=['#3498db', '#2ecc71', '#e74c3c'])
-                ax.set_ylabel('القيمة (جنيه)')
-                ax.set_title(f'ملخص شهر {sel_m}')
-                st.pyplot(fig)
         else:
-            st.info("لا توجد شهور مسجلة")
+            st.info("لا توجد شهور صالحة")
 
 st.sidebar.markdown("---")
 
