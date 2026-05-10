@@ -307,4 +307,3 @@ st.sidebar.markdown(f"[📊 فتح جوجل شيت](https://docs.google.com/spre
 # عرض معلومات
 if not revenue.empty:
     total_unpaid = (revenue['الاشتراك'] - revenue['المدفوع']).sum()
-    st.sidebar.metric("💰 إجمالي المتأخرات", f"{int(total_unpaid):,} جنيه")
